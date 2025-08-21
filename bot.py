@@ -1,10 +1,11 @@
 import logging
 import os
 import re
-import tempfile
-import asyncio
-from telegram import Update
+import json
+from urllib.parse import urlparse, parse_qs, urlunparse
+from telegram import Update, InputMediaPhoto, InputMediaVideo
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
+from dotenv import load_dotenv
 
 # Enable logging
 logging.basicConfig(
@@ -12,106 +13,224 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Get the bot token from environment variable
-TOKEN = "6818691732:AAF7QU1EtzO-R0VlWk2E4VBd1zmhS6QRImc"
+
+load_dotenv()
+TOKEN = os.getenv('telegram_token')
 if not TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN environment variable is not set")
 
+def clean_url(url):
+    """Remove tracking parameters from URLs"""
+    parsed = urlparse(url)
+    query_params = parse_qs(parsed.query)
+
+    # Common tracking parameters to remove
+    tracking_params = {
+        'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
+        'igsh', 'igshid', 'fbclid', 'gclid', 'msclkid', 'mc_cid', 'mc_eid',
+        'ref', 'referral', 'source', 'share_id', 'share_token'
+    }
+
+    # Remove tracking parameters
+    cleaned_params = {k: v for k, v in query_params.items() if k not in tracking_params}
+
+    # Reconstruct URL without tracking parameters
+    cleaned_query = '&'.join([f"{k}={v[0]}" for k, v in cleaned_params.items()])
+    cleaned_parsed = parsed._replace(query=cleaned_query)
+
+    return urlunparse(cleaned_parsed)
+
 def extract_urls(text):
     """Extract all URLs from text"""
-    url_pattern = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
+    url_pattern = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
     return re.findall(url_pattern, text)
 
 def download_media(url):
     """Download media using gallery-dl"""
     import subprocess
-    import json
 
     # Create a temporary directory for downloads
-    with tempfile.TemporaryDirectory() as tmpdir:
-        # Run gallery-dl to get metadata first
-        metadata_cmd = [
-            'gallery-dl',
-            '--dump-json',
-            '--range', '1',  # Only get info for first image/video to create caption
-            url
-        ]
+    # dont use tempfile, use `./tmp` folder instead
+    tmpdir = './tmp'
+    os.makedirs(tmpdir, exist_ok=True)
 
-        try:
-            metadata_result = subprocess.run(metadata_cmd, capture_output=True, text=True, timeout=30)
-            if metadata_result.returncode != 0:
-                logger.error(f"gallery-dl metadata failed: {metadata_result.stderr}")
-                return None, None, None
+    # change this to download the media and metadata together instead do it seperately
+    # use gallery-dl --write-info-json --directory . [url]
+    # Run gallery-dl to download media and metadata together
+    download_cmd = [
+        'gallery-dl',
+        '--write-info-json',
+        '--directory', tmpdir,
+        url
+    ]
 
-            # Parse metadata to get post URL for caption
-            metadata_lines = metadata_result.stdout.strip().split('\n')
-            if not metadata_lines:
-                return None, None, None
+    try:
+        result = subprocess.run(download_cmd, capture_output=True, text=True, timeout=120)
+        if result.returncode != 0:
+            logger.error(f"gallery-dl download failed: {result.stderr}")
+            return None, None, None, None, None
 
-            metadata = json.loads(metadata_lines[0])
-            post_url = metadata.get('_fallback', {}).get('webpage') or metadata.get('webpage_url') or url
+        # Look for info.json file for metadata
+        info_file_path = None
+        for root, dirs, files in os.walk(tmpdir):
+            for file in files:
+                if file == 'info.json':
+                    info_file_path = os.path.join(root, file)
+                    break
+            if info_file_path:
+                break
 
-        except (subprocess.TimeoutExpired, json.JSONDecodeError) as e:
-            logger.error(f"Error getting metadata: {e}")
-            post_url = url
+        # Parse metadata from info.json to get post URL for caption
+        post_url = url  # Default to original URL
+        description = ""
+        username = ""
+        fullname = ""
+        if info_file_path and os.path.exists(info_file_path):
+            try:
+                with open(info_file_path, 'r') as f:
+                    metadata = json.load(f)
+                post_url = metadata.get('post_url') or url
+                description = metadata.get('description') or metadata.get('content') or metadata.get('desc') or ""
+                author_data = metadata.get('author', {})
+                username = metadata.get('username') or author_data.get('name') or ""
+                fullname = metadata.get('fullname') or author_data.get('nick') or ""
 
-        # Now download the media
-        download_cmd = [
-            'gallery-dl',
-            '--directory', tmpdir,
-            '--limit', '5',  # Limit to 5 files to prevent spam
-            url
-        ]
+            except (json.JSONDecodeError, IOError) as e:
+                logger.error(f"Error reading info.json: {e}")
+        else:
+            logger.warning("info.json file not found")
 
-        try:
-            result = subprocess.run(download_cmd, capture_output=True, text=True, timeout=120)
-            if result.returncode != 0:
-                logger.error(f"gallery-dl download failed: {result.stderr}")
-                return None, None, None
+        # Get downloaded files (excluding JSON and temp files)
+        downloaded_files = []
+        for root, dirs, files in os.walk(tmpdir):
+            for file in files:
+                # Skip JSON files and other non-media files
+                if not file.endswith(('.json', '.tmp', '.part')):
+                    downloaded_files.append(os.path.join(root, file))
 
-            # Get downloaded files
-            downloaded_files = []
-            for root, dirs, files in os.walk(tmpdir):
-                for file in files:
-                    # Skip JSON files and other non-media files
-                    if not file.endswith(('.json', '.tmp', '.part')):
-                        downloaded_files.append(os.path.join(root, file))
+        # Sort files to ensure consistent ordering
+        downloaded_files.sort()
 
-            # Sort files to ensure consistent ordering
-            downloaded_files.sort()
+        return downloaded_files, post_url, description, username, fullname
 
-            return downloaded_files[:10], post_url, None  # Limit to 10 files
+    except subprocess.TimeoutExpired:
+        logger.error("gallery-dl download timed out")
+        return None, None, None, None, None
+    except Exception as e:
+        logger.error(f"Error downloading media: {e}")
+        return None, None, None, None, None
 
-        except subprocess.TimeoutExpired:
-            logger.error("gallery-dl download timed out")
-            return None, None, "Download timed out"
-        except Exception as e:
-            logger.error(f"Error downloading media: {e}")
-            return None, None, str(e)
+def delete_file(file_path):
+    """Delete a file safely"""
+    try:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+    except Exception as e:
+        logger.error(f"Error deleting file {file_path}: {e}")
 
-async def send_media(update: Update, context: ContextTypes.DEFAULT_TYPE, file_paths, caption):
+async def send_media(update: Update, context: ContextTypes.DEFAULT_TYPE, file_paths, post_url, description, fullname, username):
     """Send media files to user"""
     chat_id = update.effective_chat.id
 
-    for i, file_path in enumerate(file_paths):
-        try:
-            # Create caption only for the first file
-            file_caption = caption if i == 0 else None
+    file_caption = f"{description}\n\nBy: {fullname} ({username})\n{post_url}"
 
-            if file_path.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm')):
-                with open(file_path, 'rb') as video:
-                    await context.bot.send_video(chat_id=chat_id, video=video, caption=file_caption)
-            elif file_path.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
-                with open(file_path, 'rb') as photo:
-                    await context.bot.send_photo(chat_id=chat_id, photo=photo, caption=file_caption)
+    # If there's more than one file, send as media group
+    if len(file_paths) > 1:
+        media_items = []
+        files_to_delete = []
+
+        # Create all media items first
+        for i, file_path in enumerate(file_paths):
+            # Create caption only for the first file of each group
+            caption = file_caption if i == 0 else None
+
+            if file_path.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                media_items.append((InputMediaPhoto(media=open(file_path, 'rb'), caption=caption), file_path))
+                files_to_delete.append(file_path)
+            elif file_path.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm')):
+                media_items.append((InputMediaVideo(media=open(file_path, 'rb'), caption=caption), file_path))
+                files_to_delete.append(file_path)
             else:
-                with open(file_path, 'rb') as document:
-                    await context.bot.send_document(chat_id=chat_id, document=document, caption=file_caption)
+                # For unsupported media group types, send individually
+                try:
+                    if file_path.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm')):
+                        with open(file_path, 'rb') as video:
+                            await context.bot.send_video(chat_id=chat_id, video=video, caption=caption)
+                    elif file_path.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                        with open(file_path, 'rb') as photo:
+                            await context.bot.send_photo(chat_id=chat_id, photo=photo, caption=caption)
+                    else:
+                        with open(file_path, 'rb') as document:
+                            await context.bot.send_document(chat_id=chat_id, document=document, caption=caption)
+                    # Delete file after successful send
+                    delete_file(file_path)
+                except Exception as e:
+                    logger.error(f"Error sending file {file_path}: {e}")
+                    if i == 0:  # Send error message only for the first file
+                        await context.bot.send_message(chat_id=chat_id, text=f"Error sending media: {str(e)}")
 
-        except Exception as e:
-            logger.error(f"Error sending file {file_path}: {e}")
-            if i == 0:  # Send error message only for the first file
-                await context.bot.send_message(chat_id=chat_id, text=f"Error sending media: {str(e)}")
+        # Send media group if we have any items
+        # if media_group len >10, seperate into multiple album.
+        if media_items:
+            # Split media items into groups of 10 (Telegram's limit)
+            for i in range(0, len(media_items), 10):
+                media_group = media_items[i:i+10]
+                media_group_items = [item[0] for item in media_group]
+                group_files = [item[1] for item in media_group]
+
+                try:
+                    await context.bot.send_media_group(chat_id=chat_id, media=media_group_items)
+                    # Delete files after successful send
+                    for file_path in group_files:
+                        delete_file(file_path)
+                except Exception as e:
+                    logger.error(f"Unexpected error sending media group: {e}")
+                    # Fallback to sending files individually
+                    for j, (media_item, file_path) in enumerate(media_group):
+                        try:
+                            # For the first item of the first group, use the full caption
+                            # For first items of subsequent groups, use a simplified caption
+                            # For other items, no caption
+                            caption = file_caption if (i == 0 and j == 0) else (f"[Continued album] Source: {post_url}" if (j == 0 and i > 0) else None)
+
+                            if file_path.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm')):
+                                with open(file_path, 'rb') as video:
+                                    await context.bot.send_video(chat_id=chat_id, video=video, caption=caption)
+                            elif file_path.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                                with open(file_path, 'rb') as photo:
+                                    await context.bot.send_photo(chat_id=chat_id, photo=photo, caption=caption)
+                            else:
+                                with open(file_path, 'rb') as document:
+                                    await context.bot.send_document(chat_id=chat_id, document=document, caption=caption)
+                            # Delete file after successful send
+                            delete_file(file_path)
+                        except Exception as e:
+                            logger.error(f"Error sending file {file_path}: {e}")
+                            if i == 0 and j == 0:  # Send error message only for the first file
+                                await context.bot.send_message(chat_id=chat_id, text=f"Error sending media: {str(e)}")
+    else:
+        # Single file - send normally
+        for i, file_path in enumerate(file_paths):
+            try:
+                caption = file_caption if i == 0 else None
+
+                if file_path.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm')):
+                    with open(file_path, 'rb') as video:
+                        await context.bot.send_video(chat_id=chat_id, video=video, caption=caption)
+                elif file_path.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
+                    with open(file_path, 'rb') as photo:
+                        await context.bot.send_photo(chat_id=chat_id, photo=photo, caption=caption)
+                else:
+                    with open(file_path, 'rb') as document:
+                        await context.bot.send_document(chat_id=chat_id, document=document, caption=caption)
+
+                # Delete file after successful send
+                delete_file(file_path)
+
+            except Exception as e:
+                logger.error(f"Error sending file {file_path}: {e}")
+                if i == 0:  # Send error message only for the first file
+                    await context.bot.send_message(chat_id=chat_id, text=f"Error sending media: {str(e)}")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle incoming messages"""
@@ -127,28 +246,41 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Process only the first URL
     url = urls[0]
 
-    # Notify user that download is starting
-    sent_message = await update.message.reply_text("Downloading media, please wait...")
+    # Clean URL by removing tracking parameters
+    clean_url_str = clean_url(url)
+
+    # Instead send message, use chat action upload_document
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="upload_document")
 
     # Download media
-    file_paths, post_url, error = download_media(url)
+    file_paths, post_url, description, username, fullname = download_media(clean_url_str)
 
-    if error:
-        await sent_message.edit_text(f"Error: {error}")
+    if file_paths is None:
+        # Send error message if download failed
+        # Try to delete user's message
+        try:
+            await update.message.delete()
+        except Exception as e:
+            logger.warning(f"Could not delete user's message: {e}")
         return
 
     if not file_paths:
-        await sent_message.edit_text("No media found at that URL.")
+        # Send message if no media found
+        # Try to delete user's message
+        try:
+            await update.message.delete()
+        except Exception as e:
+            logger.warning(f"Could not delete user's message: {e}")
         return
 
-    # Create caption with post URL
-    caption = f"[media] [caption] {post_url}"
-
-    # Delete the "Downloading" message
-    await sent_message.delete()
+    # Try to delete user's message
+    try:
+        await update.message.delete()
+    except Exception as e:
+        logger.warning(f"Could not delete user's message: {e}")
 
     # Send media
-    await send_media(update, context, file_paths, caption)
+    await send_media(update, context, file_paths, post_url, description, fullname, username)
 
 def main():
     """Start the bot"""
