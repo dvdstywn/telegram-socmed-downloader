@@ -65,7 +65,7 @@ def download_media(url):
     ]
 
     try:
-        result = subprocess.run(download_cmd, capture_output=True, text=True, timeout=120)
+        result = subprocess.run(download_cmd, capture_output=True, text=True)
         if result.returncode != 0:
             logger.error(f"gallery-dl download failed: {result.stderr}")
             return None, None, None, None, None
@@ -113,9 +113,6 @@ def download_media(url):
 
         return downloaded_files, post_url, description, username, fullname
 
-    except subprocess.TimeoutExpired:
-        logger.error("gallery-dl download timed out")
-        return None, None, None, None, None
     except Exception as e:
         logger.error(f"Error downloading media: {e}")
         return None, None, None, None, None
@@ -151,23 +148,9 @@ async def send_media(update: Update, context: ContextTypes.DEFAULT_TYPE, file_pa
                 media_items.append((InputMediaVideo(media=open(file_path, 'rb'), caption=caption), file_path))
                 files_to_delete.append(file_path)
             else:
-                # For unsupported media group types, send individually
-                try:
-                    if file_path.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm')):
-                        with open(file_path, 'rb') as video:
-                            await context.bot.send_video(chat_id=chat_id, video=video, caption=caption)
-                    elif file_path.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
-                        with open(file_path, 'rb') as photo:
-                            await context.bot.send_photo(chat_id=chat_id, photo=photo, caption=caption)
-                    else:
-                        with open(file_path, 'rb') as document:
-                            await context.bot.send_document(chat_id=chat_id, document=document, caption=caption)
-                    # Delete file after successful send
-                    delete_file(file_path)
-                except Exception as e:
-                    logger.error(f"Error sending file {file_path}: {e}")
-                    if i == 0:  # Send error message only for the first file
-                        await context.bot.send_message(chat_id=chat_id, text=f"Error sending media: {str(e)}")
+                # For unsupported media group types, log error and delete file
+                logger.warning(f"Unsupported media type for media group: {file_path}")
+                delete_file(file_path)
 
         # Send media group if we have any items
         # if media_group len >10, seperate into multiple album.
@@ -185,29 +168,12 @@ async def send_media(update: Update, context: ContextTypes.DEFAULT_TYPE, file_pa
                         delete_file(file_path)
                 except Exception as e:
                     logger.error(f"Unexpected error sending media group: {e}")
-                    # Fallback to sending files individually
-                    for j, (media_item, file_path) in enumerate(media_group):
-                        try:
-                            # For the first item of the first group, use the full caption
-                            # For first items of subsequent groups, use a simplified caption
-                            # For other items, no caption
-                            caption = file_caption if (i == 0 and j == 0) else (f"[Continued album] Source: {post_url}" if (j == 0 and i > 0) else None)
-
-                            if file_path.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm')):
-                                with open(file_path, 'rb') as video:
-                                    await context.bot.send_video(chat_id=chat_id, video=video, caption=caption)
-                            elif file_path.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
-                                with open(file_path, 'rb') as photo:
-                                    await context.bot.send_photo(chat_id=chat_id, photo=photo, caption=caption)
-                            else:
-                                with open(file_path, 'rb') as document:
-                                    await context.bot.send_document(chat_id=chat_id, document=document, caption=caption)
-                            # Delete file after successful send
-                            delete_file(file_path)
-                        except Exception as e:
-                            logger.error(f"Error sending file {file_path}: {e}")
-                            if i == 0 and j == 0:  # Send error message only for the first file
-                                await context.bot.send_message(chat_id=chat_id, text=f"Error sending media: {str(e)}")
+                    # Send error message for the first group
+                    if i == 0:
+                        await context.bot.send_message(chat_id=chat_id, text=f"Error sending media group: {str(e)}")
+                    # Delete files even if sending failed
+                    for file_path in group_files:
+                        delete_file(file_path)
     else:
         # Single file - send normally
         for i, file_path in enumerate(file_paths):
@@ -229,8 +195,8 @@ async def send_media(update: Update, context: ContextTypes.DEFAULT_TYPE, file_pa
 
             except Exception as e:
                 logger.error(f"Error sending file {file_path}: {e}")
-                if i == 0:  # Send error message only for the first file
-                    await context.bot.send_message(chat_id=chat_id, text=f"Error sending media: {str(e)}")
+                # Delete file even if sending failed
+                delete_file(file_path)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle incoming messages"""
