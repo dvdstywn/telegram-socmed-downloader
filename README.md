@@ -1,3 +1,10 @@
+# LICENSE
+
+ya pokoknya MIT, pokoknya asal ada license. toh ini dibuat sambil makan siang, makanya ada token telegram di sana karena saya percaya AI!
+dibuat karena bot yang biasa ku pake tiba2 sering return ddinstagram. D:
+
+jangan percaya yagn ada di bawah2 sini, soalnya ini generate AI
+
 # Telegram Gallery-DL Bot
 
 A Telegram bot that downloads media from URLs using gallery-dl.
@@ -59,10 +66,3 @@ This bot uses gallery-dl, which supports a wide range of sites including:
 - And many more...
 
 For a complete list of supported sites, see the [gallery-dl documentation](https://github.com/mikf/gallery-dl).
-
-# LICENSE
-
-ya pokoknya MIT, pokoknya asal ada license. toh ini dibuat sambil makan siang, makanya ada token telegram di sana karena saya percaya AI!
-dibuat karena bot yang biasa ku pake tiba2 sering return ddinstagram. D:
-
-jangan percaya yagn ada di bawah2 sini, soalnya ini generate AI
