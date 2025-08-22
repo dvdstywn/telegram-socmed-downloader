@@ -11,6 +11,8 @@ from dotenv import load_dotenv
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
 )
+# Suppress httpx INFO logs to prevent flooding the log with getUpdates messages
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
