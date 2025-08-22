@@ -123,49 +123,48 @@ def delete_file(file_path):
 
 async def send_media(update: Update, context: ContextTypes.DEFAULT_TYPE, file_paths, post_url, description, fullname, username):
     """Send media files to user"""
-    import asyncio
-    
     chat_id = update.effective_chat.id
 
     file_caption = f"{description}\n\nBy: {fullname} ({username})\n{post_url}"
 
     # If there's more than one file, send as media group
     if len(file_paths) > 1:
-        media_items = []
-
-        # Create all media items first
-        # Further optimized version: Better resource management and error handling
-        for i, file_path in enumerate(file_paths):
-            # Create caption only for the first file of each group
-            caption = file_caption if i == 0 else None
-
-            try:
-                if file_path.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
-                    # Use context manager to ensure file is properly closed
-                    with open(file_path, 'rb') as f:
-                        media_items.append((InputMediaPhoto(media=f.read(), caption=caption), file_path))
-                elif file_path.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm')):
-                    # Use context manager to ensure file is properly closed
-                    with open(file_path, 'rb') as f:
-                        media_items.append((InputMediaVideo(media=f.read(), caption=caption), file_path))
-                else:
-                    # For unsupported media group types, log error and delete file
-                    logger.warning(f"Unsupported media type for media group: {file_path}")
-                    delete_file(file_path)
-            except Exception as e:
-                logger.error(f"Error opening file {file_path}: {e}")
-                # Try to delete the problematic file
-                delete_file(file_path)
-                
         # Send media group if we have any items
-        # if media_group len >10, seperate into multiple album.
-        if media_items:
-            # Split media items into groups of 10 (Telegram's limit)
-            for i in range(0, len(media_items), 10):
-                media_group = media_items[i:i+10]
-                media_group_items = [item[0] for item in media_group]
-                group_files = [item[1] for item in media_group]
+        # Process files in groups of 10 (Telegram's limit)
+        for i in range(0, len(file_paths), 10):
+            media_group = file_paths[i:i+10]
+            media_group_items = []
+            group_files = []
 
+            # Create all media items for this group
+            for j, file_path in enumerate(media_group):
+                # Create caption only for the first file of each group
+                caption = file_caption if j == 0 else None
+
+                try:
+                    if file_path.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                        # Open file, create media item, then immediately close
+                        with open(file_path, 'rb') as f:
+                            media_item = InputMediaPhoto(media=f.read(), caption=caption)
+                        media_group_items.append(media_item)
+                        group_files.append(file_path)
+                    elif file_path.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm')):
+                        # Open file, create media item, then immediately close
+                        with open(file_path, 'rb') as f:
+                            media_item = InputMediaVideo(media=f.read(), caption=caption)
+                        media_group_items.append(media_item)
+                        group_files.append(file_path)
+                    else:
+                        # For unsupported media group types, log error and delete file
+                        logger.warning(f"Unsupported media type for media group: {file_path}")
+                        delete_file(file_path)
+                except Exception as e:
+                    logger.error(f"Error opening file {file_path}: {e}")
+                    # Try to delete the problematic file
+                    delete_file(file_path)
+
+            # Send this group of media items
+            if media_group_items:
                 try:
                     await context.bot.send_media_group(chat_id=chat_id, media=media_group_items)
                     # Delete files after successful send
