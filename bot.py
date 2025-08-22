@@ -204,22 +204,6 @@ async def send_media(update: Update, context: ContextTypes.DEFAULT_TYPE, file_pa
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle incoming messages"""
-    import time
-    import os
-    
-    # Try to import psutil for resource monitoring
-    try:
-        import psutil
-        process = psutil.Process(os.getpid())
-        initial_cpu = process.cpu_percent()
-        initial_memory = process.memory_info().rss / 1024 / 1024  # MB
-        psutil_available = True
-    except ImportError:
-        psutil_available = False
-        logger.warning("psutil not available, resource monitoring disabled")
-    
-    start_time = time.time()
-    
     if not update.message or not update.message.text:
         return
 
@@ -267,19 +251,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Send media
     await send_media(update, context, file_paths, post_url, description, fullname, username)
-    
-    # Calculate and log the response time and resource usage
-    end_time = time.time()
-    response_time = end_time - start_time
-    
-    logger.info(f"Bot response time: {response_time:.2f} seconds")
-    
-    if psutil_available:
-        # Get final resource usage
-        final_cpu = process.cpu_percent()
-        final_memory = process.memory_info().rss / 1024 / 1024  # MB
-        logger.info(f"CPU usage: {final_cpu - initial_cpu:.2f}%")
-        logger.info(f"Memory usage: {final_memory - initial_memory:.2f} MB")
 
 def main():
     """Start the bot"""
