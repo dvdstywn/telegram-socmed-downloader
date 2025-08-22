@@ -137,21 +137,36 @@ async def send_media(update: Update, context: ContextTypes.DEFAULT_TYPE, file_pa
         files_to_delete = []
 
         # Create all media items first
+        # Optimized version: Properly manage file handles and simplify logic
+        file_handles = []  # Keep track of open file handles for proper cleanup
         for i, file_path in enumerate(file_paths):
             # Create caption only for the first file of each group
             caption = file_caption if i == 0 else None
 
-            if file_path.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
-                media_items.append((InputMediaPhoto(media=open(file_path, 'rb'), caption=caption), file_path))
-                files_to_delete.append(file_path)
-            elif file_path.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm')):
-                media_items.append((InputMediaVideo(media=open(file_path, 'rb'), caption=caption), file_path))
-                files_to_delete.append(file_path)
-            else:
-                # For unsupported media group types, log error and delete file
-                logger.warning(f"Unsupported media type for media group: {file_path}")
+            try:
+                if file_path.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                    file_handle = open(file_path, 'rb')
+                    file_handles.append(file_handle)
+                    media_items.append((InputMediaPhoto(media=file_handle, caption=caption), file_path))
+                elif file_path.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm')):
+                    file_handle = open(file_path, 'rb')
+                    file_handles.append(file_handle)
+                    media_items.append((InputMediaVideo(media=file_handle, caption=caption), file_path))
+                else:
+                    # For unsupported media group types, log error and delete file
+                    logger.warning(f"Unsupported media type for media group: {file_path}")
+                    delete_file(file_path)
+            except Exception as e:
+                logger.error(f"Error opening file {file_path}: {e}")
+                # Clean up any opened file handles before continuing
+                for handle in file_handles:
+                    try:
+                        handle.close()
+                    except:
+                        pass
+                file_handles.clear()
+                # Try to delete the problematic file
                 delete_file(file_path)
-
         # Send media group if we have any items
         # if media_group len >10, seperate into multiple album.
         if media_items:
@@ -174,21 +189,31 @@ async def send_media(update: Update, context: ContextTypes.DEFAULT_TYPE, file_pa
                     # Delete files even if sending failed
                     for file_path in group_files:
                         delete_file(file_path)
+                finally:
+                    # Always close file handles
+                    for media_item, _ in media_group:
+                        try:
+                            # Close the underlying file handle
+                            if hasattr(media_item.media, 'close'):
+                                media_item.media.close()
+                        except Exception as e:
+                            logger.error(f"Error closing file handle: {e}")
     else:
         # Single file - send normally
         for i, file_path in enumerate(file_paths):
+            file_handle = None
             try:
                 caption = file_caption if i == 0 else None
 
                 if file_path.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm')):
-                    with open(file_path, 'rb') as video:
-                        await context.bot.send_video(chat_id=chat_id, video=video, caption=caption)
+                    file_handle = open(file_path, 'rb')
+                    await context.bot.send_video(chat_id=chat_id, video=file_handle, caption=caption)
                 elif file_path.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
-                    with open(file_path, 'rb') as photo:
-                        await context.bot.send_photo(chat_id=chat_id, photo=photo, caption=caption)
+                    file_handle = open(file_path, 'rb')
+                    await context.bot.send_photo(chat_id=chat_id, photo=file_handle, caption=caption)
                 else:
-                    with open(file_path, 'rb') as document:
-                        await context.bot.send_document(chat_id=chat_id, document=document, caption=caption)
+                    file_handle = open(file_path, 'rb')
+                    await context.bot.send_document(chat_id=chat_id, document=file_handle, caption=caption)
 
                 # Delete file after successful send
                 delete_file(file_path)
@@ -197,6 +222,13 @@ async def send_media(update: Update, context: ContextTypes.DEFAULT_TYPE, file_pa
                 logger.error(f"Error sending file {file_path}: {e}")
                 # Delete file even if sending failed
                 delete_file(file_path)
+            finally:
+                # Always close file handle
+                if file_handle:
+                    try:
+                        file_handle.close()
+                    except Exception as e:
+                        logger.error(f"Error closing file handle: {e}")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle incoming messages"""
