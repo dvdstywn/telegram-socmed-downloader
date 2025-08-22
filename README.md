@@ -60,6 +60,9 @@ This bot uses gallery-dl, which supports a wide range of sites including:
 
 For a complete list of supported sites, see the [gallery-dl documentation](https://github.com/mikf/gallery-dl).
 
-## License
+# LICENSE
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+ya pokoknya MIT, pokoknya asal ada license. toh ini dibuat sambil makan siang, makanya ada token telegram di sana karena saya percaya AI!
+dibuat karena bot yang biasa ku pake tiba2 sering return ddinstagram. D:
+
+jangan percaya yagn ada di bawah2 sini, soalnya ini generate AI
