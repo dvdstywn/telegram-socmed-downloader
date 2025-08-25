@@ -1,6 +1,7 @@
 # this project
 /tmp*
 .env
+/accounts*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

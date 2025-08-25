@@ -66,3 +66,42 @@ This bot uses gallery-dl, which supports a wide range of sites including:
 - And many more...
 
 For a complete list of supported sites, see the [gallery-dl documentation](https://github.com/mikf/gallery-dl).
+
+## Social Media Automation
+
+This project also includes social media automation scripts using Playwright:
+
+### Setup
+
+1. Install Playwright dependencies:
+   ```bash
+   source venv/bin/activate
+   playwright install chromium
+   ```
+
+2. Create a `.env` file with your social media credentials:
+   ```
+   TWITTER_USERNAME=your_username_or_email
+   TWITTER_PASSWORD=your_password
+   INSTAGRAM_USERNAME=your_instagram_username
+   INSTAGRAM_PASSWORD=your_instagram_password
+   ```
+
+### Scripts
+
+- `twitter_login.py` - Log into Twitter and save session cookies
+- `instagram_login.py` - Log into Instagram and save session cookies
+
+### Usage
+
+Run the Twitter login script:
+```bash
+python twitter_login.py
+```
+
+Run the Instagram login script:
+```bash
+python instagram_login.py
+```
+
+Both scripts will save session cookies to the `./tmp` directory for faster subsequent logins.
