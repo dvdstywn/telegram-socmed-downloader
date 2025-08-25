@@ -62,6 +62,7 @@ def download_media(url):
     download_cmd = [
         'gallery-dl',
         '--write-info-json',
+        "--config", "./accounts/config.json",
         '--directory', tmpdir,
         url
     ]
@@ -75,7 +76,7 @@ def download_media(url):
         # Look for info.json file for metadata
         info_file_path = None
         downloaded_files = []
-        
+
         # Walk through the directory only once to find both info.json and media files
         for root, dirs, files in os.walk(tmpdir):
             for file in files:
