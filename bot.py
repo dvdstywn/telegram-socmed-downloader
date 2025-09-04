@@ -4,8 +4,8 @@ import re
 import json
 from urllib.parse import urlparse, parse_qs, urlunparse
 from telegram import Update, InputMediaPhoto, InputMediaVideo
-from telegram.ext import Application, MessageHandler, filters, ContextTypes
-from dotenv import load_dotenv
+from telegram.ext import Application, MessageHandler, filters, ContextTypes, CommandHandler
+from dotenv import load_dotenv, set_key
 
 # Enable logging
 logging.basicConfig(
@@ -20,6 +20,47 @@ load_dotenv()
 TOKEN = os.getenv('telegram_token')
 if not TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN environment variable is not set")
+
+# Load accepted users from .env
+def load_accepted_users():
+    """Load accepted users from .env file"""
+    users_str = os.getenv('ACCEPT_USERS', '')
+    if users_str:
+        return [user.strip() for user in users_str.split(',') if user.strip()]
+    return []
+
+# Initialize accepted users list
+ACCEPTED_USERS = load_accepted_users()
+
+# Admin user ID (you should set this in your .env file)
+ADMIN_USER_ID = os.getenv('ADMIN_USER_ID')
+
+def is_user_accepted(user_id):
+    """Check if user is in accepted users list"""
+    # If no users are specified, allow all users
+    if not ACCEPTED_USERS:
+        return True
+    return str(user_id) in ACCEPTED_USERS
+
+def add_accepted_user(user_id):
+    """Add a new user to the accepted users list"""
+    global ACCEPTED_USERS
+    
+    # Load current users
+    current_users = load_accepted_users()
+    
+    # Add new user if not already present
+    if str(user_id) not in current_users:
+        current_users.append(str(user_id))
+        
+        # Update .env file
+        set_key('.env', 'ACCEPT_USERS', ','.join(current_users))
+        
+        # Reload environment variables and update global list
+        load_dotenv(override=True)
+        ACCEPTED_USERS = load_accepted_users()
+        return True
+    return False
 
 def clean_url(url):
     """Remove tracking parameters from URLs"""
@@ -210,6 +251,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
+    # Check if user is accepted
+    user_id = update.effective_user.id
+    if not is_user_accepted(user_id):
+        # Optionally send a message to the user
+        # await update.message.reply_text("You are not authorized to use this bot.")
+        return
+
     text = update.message.text
     urls = extract_urls(text)
 
@@ -264,6 +312,50 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Send media
     await send_media(update, context, file_paths, post_url, description, fullname, username)
 
+async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Command to add a new accepted user"""
+    user_id = update.effective_user.id
+    
+    # Check if user is admin
+    if str(user_id) != ADMIN_USER_ID:
+        await update.message.reply_text("You are not authorized to add users.")
+        return
+    
+    # Check if user ID is provided
+    if not context.args:
+        await update.message.reply_text("Please provide a user ID to add. Usage: /adduser <user_id>")
+        return
+    
+    try:
+        new_user_id = context.args[0]
+        # Validate that it's a numeric ID
+        int(new_user_id)
+    except (ValueError, IndexError):
+        await update.message.reply_text("Invalid user ID. Please provide a valid numeric user ID.")
+        return
+    
+    # Add user
+    if add_accepted_user(new_user_id):
+        await update.message.reply_text(f"User {new_user_id} has been added to the accepted users list.")
+    else:
+        await update.message.reply_text(f"User {new_user_id} is already in the accepted users list.")
+
+async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Command to list accepted users"""
+    user_id = update.effective_user.id
+    
+    # Check if user is admin
+    if str(user_id) != ADMIN_USER_ID:
+        await update.message.reply_text("You are not authorized to list users.")
+        return
+    
+    # List users
+    if ACCEPTED_USERS:
+        users_list = "\n".join(ACCEPTED_USERS)
+        await update.message.reply_text(f"Accepted users:\n{users_list}")
+    else:
+        await update.message.reply_text("No accepted users configured. All users are allowed.")
+
 def main():
     """Start the bot"""
     # Create the Application and pass it your bot's token
@@ -271,6 +363,10 @@ def main():
 
     # Register message handler
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # Register command handlers
+    application.add_handler(CommandHandler("adduser", add_user_command))
+    application.add_handler(CommandHandler("listusers", list_users_command))
 
     # Start the Bot
     application.run_polling(allowed_updates=Update.ALL_TYPES)
