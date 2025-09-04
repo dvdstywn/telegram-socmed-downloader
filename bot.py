@@ -314,31 +314,37 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Command to add a new accepted user"""
-    user_id = update.effective_user.id
+    admin_user_id = update.effective_user.id
     
     # Check if user is admin
-    if str(user_id) != ADMIN_USER_ID:
+    if str(admin_user_id) != ADMIN_USER_ID:
         await update.message.reply_text("You are not authorized to add users.")
         return
     
-    # Check if user ID is provided
-    if not context.args:
-        await update.message.reply_text("Please provide a user ID to add. Usage: /adduser <user_id>")
-        return
-    
-    try:
-        new_user_id = context.args[0]
-        # Validate that it's a numeric ID
-        int(new_user_id)
-    except (ValueError, IndexError):
-        await update.message.reply_text("Invalid user ID. Please provide a valid numeric user ID.")
+    # Check if command was used as a reply
+    if update.message.reply_to_message:
+        # Get user ID from replied message
+        target_user_id = update.message.reply_to_message.from_user.id
+        target_username = update.message.reply_to_message.from_user.username or "Unknown"
+    elif context.args:
+        # Get user ID from command arguments
+        try:
+            target_user_id = context.args[0]
+            # Validate that it's a numeric ID
+            int(target_user_id)
+            target_username = target_user_id
+        except (ValueError, IndexError):
+            await update.message.reply_text("Invalid user ID. Please provide a valid numeric user ID or reply to a user's message.")
+            return
+    else:
+        await update.message.reply_text("Please reply to a user's message or provide a user ID. Usage: /adduser [user_id]")
         return
     
     # Add user
-    if add_accepted_user(new_user_id):
-        await update.message.reply_text(f"User {new_user_id} has been added to the accepted users list.")
+    if add_accepted_user(target_user_id):
+        await update.message.reply_text(f"User {target_username} ({target_user_id}) has been added to the accepted users list.")
     else:
-        await update.message.reply_text(f"User {new_user_id} is already in the accepted users list.")
+        await update.message.reply_text(f"User {target_username} ({target_user_id}) is already in the accepted users list.")
 
 async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Command to list accepted users"""
