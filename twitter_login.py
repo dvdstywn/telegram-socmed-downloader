@@ -91,7 +91,7 @@ async def is_logged_in(page):
     except:
         return False
 
-async def login_to_twitter(username: str, password: str, headless: bool = False, use_session_data: bool = True):
+async def login_to_twitter(username: str, password: str, headless: bool = True, use_session_data: bool = True):
     """
     Log into Twitter using Playwright with session data persistence
 
@@ -183,7 +183,7 @@ async def main():
     print("🚀 Starting Twitter login...")
 
     # Attempt login
-    page, browser, playwright = await login_to_twitter(username, password, headless=False, use_session_data=True)
+    page, browser, playwright = await login_to_twitter(username, password, headless=True, use_session_data=True)
 
     # Close browser immediately after session creation
     if browser:
