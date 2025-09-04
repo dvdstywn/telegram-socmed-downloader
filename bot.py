@@ -37,11 +37,16 @@ ADMIN_USER_ID = os.getenv('ADMIN_USER_ID')
 
 def is_user_accepted(user_id):
     """Check if user is in accepted users list"""
-    # If no users are specified, deny all users by default for security
-    # If you want to allow all users, remove the ACCEPT_USERS line from .env file
+    # If no users are specified in .env, only allow the admin
+    # If users are specified, allow those users plus the admin
+    if not os.getenv('ACCEPT_USERS'):
+        # Only allow admin when ACCEPT_USERS is not set in .env
+        return str(user_id) == ADMIN_USER_ID
     if not ACCEPTED_USERS:
-        return False  # Deny all users when no accepted users are configured
-    return str(user_id) in ACCEPTED_USERS
+        # Only allow admin when ACCEPT_USERS is set but empty
+        return str(user_id) == ADMIN_USER_ID
+    # Allow specified users or the admin
+    return str(user_id) in ACCEPTED_USERS or str(user_id) == ADMIN_USER_ID
 
 def add_accepted_user(user_id):
     """Add a new user to the accepted users list"""
