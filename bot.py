@@ -230,27 +230,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if file_paths is None:
         # Send error message if download failed
-        # Try to delete user's message
-        try:
-            await update.message.delete()
-        except Exception as e:
-            logger.warning(f"Could not delete user's message: {e}")
+        # Check if message is from a group chat
+        chat_type = update.effective_chat.type
+        if chat_type not in ['group', 'supergroup']:
+            # Only delete in private chats, not in groups
+            try:
+                await update.message.delete()
+            except Exception as e:
+                logger.warning(f"Could not delete user's message: {e}")
         return
 
     if not file_paths:
         # Send message if no media found
-        # Try to delete user's message
+        # Check if message is from a group chat
+        chat_type = update.effective_chat.type
+        if chat_type not in ['group', 'supergroup']:
+            # Only delete in private chats, not in groups
+            try:
+                await update.message.delete()
+            except Exception as e:
+                logger.warning(f"Could not delete user's message: {e}")
+        return
+
+    # Check if message is from a group chat before deleting
+    chat_type = update.effective_chat.type
+    if chat_type not in ['group', 'supergroup']:
+        # Only delete in private chats, not in groups
         try:
             await update.message.delete()
         except Exception as e:
             logger.warning(f"Could not delete user's message: {e}")
-        return
-
-    # Try to delete user's message
-    try:
-        await update.message.delete()
-    except Exception as e:
-        logger.warning(f"Could not delete user's message: {e}")
 
     # Send media
     await send_media(update, context, file_paths, post_url, description, fullname, username)
