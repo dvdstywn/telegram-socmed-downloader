@@ -37,9 +37,10 @@ ADMIN_USER_ID = os.getenv('ADMIN_USER_ID')
 
 def is_user_accepted(user_id):
     """Check if user is in accepted users list"""
-    # If no users are specified, allow all users
+    # If no users are specified, deny all users by default for security
+    # If you want to allow all users, remove the ACCEPT_USERS line from .env file
     if not ACCEPTED_USERS:
-        return True
+        return False  # Deny all users when no accepted users are configured
     return str(user_id) in ACCEPTED_USERS
 
 def add_accepted_user(user_id):
@@ -255,7 +256,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_user_accepted(user_id):
         # Optionally send a message to the user
-        # await update.message.reply_text("You are not authorized to use this bot.")
+        await update.message.reply_text("You are not authorized to use this bot.")
         return
 
     text = update.message.text
