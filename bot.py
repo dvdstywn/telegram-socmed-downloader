@@ -3,6 +3,7 @@ import os
 import re
 import json
 import asyncio
+import subprocess
 from urllib.parse import urlparse, parse_qs, urlunparse
 from telegram import Update, InputMediaPhoto, InputMediaVideo
 from telegram.ext import (
@@ -121,6 +122,34 @@ def extract_urls(text):
     """Extract all URLs from text"""
     url_pattern = r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
     return re.findall(url_pattern, text)
+
+
+def compress_video_with_ffmpeg(input_path, output_path):
+    """Compress video using ffmpeg to reduce file size"""
+    try:
+        # Check if ffmpeg is available
+        ffmpeg_cmd = [
+            "ffmpeg",
+            "-i", input_path,
+            "-vcodec", "libx264",
+            "-crf", "28",  # Quality factor (higher = more compression, lower quality)
+            "-preset", "fast",  # Compression speed/quality tradeoff
+            "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",  # Ensure dimensions are even
+            "-movflags", "+faststart",  # Optimize for streaming
+            "-y",  # Overwrite output file
+            output_path
+        ]
+        
+        result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            logger.info(f"Successfully compressed video: {input_path} -> {output_path}")
+            return True
+        else:
+            logger.error(f"FFmpeg compression failed: {result.stderr}")
+            return False
+    except Exception as e:
+        logger.error(f"Error during FFmpeg compression: {e}")
+        return False
 
 
 def download_media(url):
@@ -304,8 +333,31 @@ async def send_media(
                             # Delete the successfully sent file
                             delete_file(file_path)
                         except TimedOut:
-                            logger.error(f"Timed out sending individual media, consider compressing large files")
-                            # Continue for other files
+                            logger.error(f"Timed out sending individual media, compressing large files...")
+                            # Compress the video and try again
+                            compressed_path = file_path + ".compressed.mp4"
+                            if file_path.lower().endswith((".mp4", ".avi", ".mov", ".mkv", ".webm")):
+                                if compress_video_with_ffmpeg(file_path, compressed_path):
+                                    try:
+                                        with open(compressed_path, 'rb') as video:
+                                            await context.bot.send_video(
+                                                chat_id=chat_id,
+                                                video=video,
+                                                caption=f"[COMPRESSED] {media_item.caption or ''}"
+                                            )
+                                        # Delete the compressed file after sending
+                                        delete_file(compressed_path)
+                                    except Exception as e:
+                                        logger.error(f"Error sending compressed video: {e}")
+                                    # Delete the original file
+                                    delete_file(file_path)
+                                else:
+                                    logger.error(f"Failed to compress video: {file_path}")
+                                    # Delete the original file even if compression failed
+                                    delete_file(file_path)
+                            else:
+                                # For non-video files, just delete them
+                                delete_file(file_path)
                         except Exception as e:
                             logger.error(f"Error sending individual media: {e}")
                 except Exception as e:
@@ -348,9 +400,31 @@ async def send_media(
                 delete_file(file_path)
 
             except TimedOut:
-                logger.error(f"Timed out sending {file_path}, consider compressing large files")
-                # Delete file even if sending failed due to timeout
-                delete_file(file_path)
+                logger.error(f"Timed out sending {file_path}, compressing large file...")
+                # Compress the video and try again
+                compressed_path = file_path + ".compressed.mp4"
+                if file_path.lower().endswith((".mp4", ".avi", ".mov", ".mkv", ".webm")):
+                    if compress_video_with_ffmpeg(file_path, compressed_path):
+                        try:
+                            with open(compressed_path, 'rb') as video:
+                                await context.bot.send_video(
+                                    chat_id=chat_id,
+                                    video=video,
+                                    caption=f"[COMPRESSED] {file_caption or ''}"
+                                )
+                            # Delete the compressed file after sending
+                            delete_file(compressed_path)
+                        except Exception as e:
+                            logger.error(f"Error sending compressed video: {e}")
+                        # Delete the original file
+                        delete_file(file_path)
+                    else:
+                        logger.error(f"Failed to compress video: {file_path}")
+                        # Delete the original file even if compression failed
+                        delete_file(file_path)
+                else:
+                    # For non-video files, just delete them
+                    delete_file(file_path)
             except Exception as e:
                 logger.error(f"Error sending file {file_path}: {e}")
                 # Delete file even if sending failed
