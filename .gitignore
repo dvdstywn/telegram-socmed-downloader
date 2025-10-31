@@ -2,6 +2,7 @@
 /tmp*
 .env
 /accounts*
+*.service
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
