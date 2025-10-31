@@ -2,14 +2,22 @@ import logging
 import os
 import re
 import json
+import asyncio
 from urllib.parse import urlparse, parse_qs, urlunparse
 from telegram import Update, InputMediaPhoto, InputMediaVideo
-from telegram.ext import Application, MessageHandler, filters, ContextTypes, CommandHandler
+from telegram.ext import (
+    Application,
+    MessageHandler,
+    filters,
+    ContextTypes,
+    CommandHandler,
+)
+from telegram.error import TimedOut
 from dotenv import load_dotenv, set_key
 
 # Enable logging
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 # Suppress httpx INFO logs to prevent flooding the log with getUpdates messages
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -17,29 +25,32 @@ logger = logging.getLogger(__name__)
 
 
 load_dotenv()
-TOKEN = os.getenv('telegram_token')
+TOKEN = os.getenv("telegram_token")
 if not TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN environment variable is not set")
+
 
 # Load accepted users from .env
 def load_accepted_users():
     """Load accepted users from .env file"""
-    users_str = os.getenv('ACCEPT_USERS', '')
+    users_str = os.getenv("ACCEPT_USERS", "")
     if users_str:
-        return [user.strip() for user in users_str.split(',') if user.strip()]
+        return [user.strip() for user in users_str.split(",") if user.strip()]
     return []
+
 
 # Initialize accepted users list
 ACCEPTED_USERS = load_accepted_users()
 
 # Admin user ID (you should set this in your .env file)
-ADMIN_USER_ID = os.getenv('ADMIN_USER_ID')
+ADMIN_USER_ID = os.getenv("ADMIN_USER_ID")
+
 
 def is_user_accepted(user_id):
     """Check if user is in accepted users list"""
     # If no users are specified in .env, only allow the admin
     # If users are specified, allow those users plus the admin
-    if not os.getenv('ACCEPT_USERS'):
+    if not os.getenv("ACCEPT_USERS"):
         # Only allow admin when ACCEPT_USERS is not set in .env
         return str(user_id) == ADMIN_USER_ID
     if not ACCEPTED_USERS:
@@ -48,25 +59,27 @@ def is_user_accepted(user_id):
     # Allow specified users or the admin
     return str(user_id) in ACCEPTED_USERS or str(user_id) == ADMIN_USER_ID
 
+
 def add_accepted_user(user_id):
     """Add a new user to the accepted users list"""
     global ACCEPTED_USERS
-    
+
     # Load current users
     current_users = load_accepted_users()
-    
+
     # Add new user if not already present
     if str(user_id) not in current_users:
         current_users.append(str(user_id))
-        
+
         # Update .env file
-        set_key('.env', 'ACCEPT_USERS', ','.join(current_users))
-        
+        set_key(".env", "ACCEPT_USERS", ",".join(current_users))
+
         # Reload environment variables and update global list
         load_dotenv(override=True)
         ACCEPTED_USERS = load_accepted_users()
         return True
     return False
+
 
 def clean_url(url):
     """Remove tracking parameters from URLs"""
@@ -75,24 +88,40 @@ def clean_url(url):
 
     # Common tracking parameters to remove
     tracking_params = {
-        'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
-        'igsh', 'igshid', 'fbclid', 'gclid', 'msclkid', 'mc_cid', 'mc_eid',
-        'ref', 'referral', 'source', 'share_id', 'share_token'
+        "utm_source",
+        "utm_medium",
+        "utm_campaign",
+        "utm_term",
+        "utm_content",
+        "igsh",
+        "igshid",
+        "fbclid",
+        "gclid",
+        "msclkid",
+        "mc_cid",
+        "mc_eid",
+        "ref",
+        "referral",
+        "source",
+        "share_id",
+        "share_token",
     }
 
     # Remove tracking parameters
     cleaned_params = {k: v for k, v in query_params.items() if k not in tracking_params}
 
     # Reconstruct URL without tracking parameters
-    cleaned_query = '&'.join([f"{k}={v[0]}" for k, v in cleaned_params.items()])
+    cleaned_query = "&".join([f"{k}={v[0]}" for k, v in cleaned_params.items()])
     cleaned_parsed = parsed._replace(query=cleaned_query)
 
     return urlunparse(cleaned_parsed)
 
+
 def extract_urls(text):
     """Extract all URLs from text"""
-    url_pattern = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
+    url_pattern = r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
     return re.findall(url_pattern, text)
+
 
 def download_media(url):
     """Download media using gallery-dl"""
@@ -100,18 +129,20 @@ def download_media(url):
 
     # Create a temporary directory for downloads
     # dont use tempfile, use `./tmp` folder instead
-    tmpdir = './tmp'
+    tmpdir = "./tmp"
     os.makedirs(tmpdir, exist_ok=True)
 
     # Change this to download the media and metadata together instead do it seperately
     # Use gallery-dl --write-info-json --directory . [url]
     # Run gallery-dl to download media and metadata together
     download_cmd = [
-        'gallery-dl',
-        '--write-info-json',
-        "--config", "./accounts/config.json",
-        '--directory', tmpdir,
-        url
+        "gallery-dl",
+        "--write-info-json",
+        "--config",
+        "./accounts/config.json",
+        "--directory",
+        tmpdir,
+        url,
     ]
 
     try:
@@ -128,10 +159,10 @@ def download_media(url):
         for root, dirs, files in os.walk(tmpdir):
             for file in files:
                 file_path = os.path.join(root, file)
-                if file == 'info.json':
+                if file == "info.json":
                     info_file_path = file_path
                 # Skip JSON files and other non-media files
-                elif not file.endswith(('.json', '.tmp', '.part')):
+                elif not file.endswith((".json", ".tmp", ".part")):
                     downloaded_files.append(file_path)
 
         # Sort files to ensure consistent ordering
@@ -144,13 +175,18 @@ def download_media(url):
         fullname = ""
         if info_file_path and os.path.exists(info_file_path):
             try:
-                with open(info_file_path, 'r') as f:
+                with open(info_file_path, "r") as f:
                     metadata = json.load(f)
-                post_url = metadata.get('post_url') or url
-                description = metadata.get('description') or metadata.get('content') or metadata.get('desc') or ""
-                author_data = metadata.get('author', {})
-                username = metadata.get('username') or author_data.get('name') or ""
-                fullname = metadata.get('fullname') or author_data.get('nick') or ""
+                post_url = metadata.get("post_url") or url
+                description = (
+                    metadata.get("description")
+                    or metadata.get("content")
+                    or metadata.get("desc")
+                    or ""
+                )
+                author_data = metadata.get("author", {})
+                username = metadata.get("username") or author_data.get("name") or ""
+                fullname = metadata.get("fullname") or author_data.get("nick") or ""
 
             except (json.JSONDecodeError, IOError) as e:
                 logger.error(f"Error reading info.json: {e}")
@@ -163,6 +199,7 @@ def download_media(url):
         logger.error(f"Error downloading media: {e}")
         return None, None, None, None, None
 
+
 def delete_file(file_path):
     """Delete a file safely"""
     try:
@@ -171,7 +208,16 @@ def delete_file(file_path):
     except Exception as e:
         logger.error(f"Error deleting file {file_path}: {e}")
 
-async def send_media(update: Update, context: ContextTypes.DEFAULT_TYPE, file_paths, post_url, description, fullname, username):
+
+async def send_media(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    file_paths,
+    post_url,
+    description,
+    fullname,
+    username,
+):
     """Send media files to user"""
     chat_id = update.effective_chat.id
 
@@ -182,7 +228,7 @@ async def send_media(update: Update, context: ContextTypes.DEFAULT_TYPE, file_pa
         # Send media group if we have any items
         # Process files in groups of 10 (Telegram's limit)
         for i in range(0, len(file_paths), 10):
-            media_group = file_paths[i:i+10]
+            media_group = file_paths[i : i + 10]
             media_group_items = []
             group_files = []
 
@@ -192,21 +238,29 @@ async def send_media(update: Update, context: ContextTypes.DEFAULT_TYPE, file_pa
                 caption = file_caption if j == 0 else None
 
                 try:
-                    if file_path.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                    if file_path.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
                         # Open file, create media item, then immediately close
-                        with open(file_path, 'rb') as f:
-                            media_item = InputMediaPhoto(media=f.read(), caption=caption)
+                        with open(file_path, "rb") as f:
+                            media_item = InputMediaPhoto(
+                                media=f.read(), caption=caption
+                            )
                         media_group_items.append(media_item)
                         group_files.append(file_path)
-                    elif file_path.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm')):
+                    elif file_path.lower().endswith(
+                        (".mp4", ".avi", ".mov", ".mkv", ".webm")
+                    ):
                         # Open file, create media item, then immediately close
-                        with open(file_path, 'rb') as f:
-                            media_item = InputMediaVideo(media=f.read(), caption=caption)
+                        with open(file_path, "rb") as f:
+                            media_item = InputMediaVideo(
+                                media=f.read(), caption=caption
+                            )
                         media_group_items.append(media_item)
                         group_files.append(file_path)
                     else:
                         # For unsupported media group types, log error and delete file
-                        logger.warning(f"Unsupported media type for media group: {file_path}")
+                        logger.warning(
+                            f"Unsupported media type for media group: {file_path}"
+                        )
                         delete_file(file_path)
                 except Exception as e:
                     logger.error(f"Error opening file {file_path}: {e}")
@@ -216,15 +270,51 @@ async def send_media(update: Update, context: ContextTypes.DEFAULT_TYPE, file_pa
             # Send this group of media items
             if media_group_items:
                 try:
-                    await context.bot.send_media_group(chat_id=chat_id, media=media_group_items)
+                    await context.bot.send_media_group(
+                        chat_id=chat_id, media=media_group_items
+                    )
                     # Delete files after successful send
                     for file_path in group_files:
                         delete_file(file_path)
+                except TimedOut:
+                    logger.error("Timed out sending media group, retrying with smaller batch...")
+                    # If timed out, retry with smaller batch
+                    for media_item in media_group_items:
+                        try:
+                            # Determine file path for this specific media item
+                            media_file_index = media_group_items.index(media_item)
+                            file_path = group_files[media_file_index]
+                            
+                            if isinstance(media_item, InputMediaVideo):
+                                # Send video individually with higher timeout
+                                with open(file_path, 'rb') as video:
+                                    await context.bot.send_video(
+                                        chat_id=chat_id, 
+                                        video=video, 
+                                        caption=media_item.caption
+                                    )
+                            elif isinstance(media_item, InputMediaPhoto):
+                                # Send photo individually
+                                with open(file_path, 'rb') as photo:
+                                    await context.bot.send_photo(
+                                        chat_id=chat_id, 
+                                        photo=photo, 
+                                        caption=media_item.caption
+                                    )
+                            # Delete the successfully sent file
+                            delete_file(file_path)
+                        except TimedOut:
+                            logger.error(f"Timed out sending individual media, consider compressing large files")
+                            # Continue for other files
+                        except Exception as e:
+                            logger.error(f"Error sending individual media: {e}")
                 except Exception as e:
                     logger.error(f"Unexpected error sending media group: {e}")
                     # Send error message for the first group
                     if i == 0:
-                        await context.bot.send_message(chat_id=chat_id, text=f"Error sending media group: {str(e)}")
+                        await context.bot.send_message(
+                            chat_id=chat_id, text=f"Error sending media group: {str(e)}"
+                        )
                     # Delete files even if sending failed
                     for file_path in group_files:
                         delete_file(file_path)
@@ -234,23 +324,38 @@ async def send_media(update: Update, context: ContextTypes.DEFAULT_TYPE, file_pa
             try:
                 caption = file_caption if i == 0 else None
 
-                if file_path.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm')):
-                    with open(file_path, 'rb') as video:
-                        await context.bot.send_video(chat_id=chat_id, video=video, caption=caption)
-                elif file_path.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
-                    with open(file_path, 'rb') as photo:
-                        await context.bot.send_photo(chat_id=chat_id, photo=photo, caption=caption)
+                if file_path.lower().endswith(
+                    (".mp4", ".avi", ".mov", ".mkv", ".webm")
+                ):
+                    with open(file_path, "rb") as video:
+                        await context.bot.send_video(
+                            chat_id=chat_id, video=video, caption=caption
+                        )
+                elif file_path.lower().endswith(
+                    (".jpg", ".jpeg", ".png", ".gif", ".webp")
+                ):
+                    with open(file_path, "rb") as photo:
+                        await context.bot.send_photo(
+                            chat_id=chat_id, photo=photo, caption=caption
+                        )
                 else:
-                    with open(file_path, 'rb') as document:
-                        await context.bot.send_document(chat_id=chat_id, document=document, caption=caption)
+                    with open(file_path, "rb") as document:
+                        await context.bot.send_document(
+                            chat_id=chat_id, document=document, caption=caption
+                        )
 
                 # Delete file after successful send
                 delete_file(file_path)
 
+            except TimedOut:
+                logger.error(f"Timed out sending {file_path}, consider compressing large files")
+                # Delete file even if sending failed due to timeout
+                delete_file(file_path)
             except Exception as e:
                 logger.error(f"Error sending file {file_path}: {e}")
                 # Delete file even if sending failed
                 delete_file(file_path)
+
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle incoming messages"""
@@ -277,16 +382,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     clean_url_str = clean_url(url)
 
     # Instead send message, use chat action upload_document
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="upload_document")
+    await context.bot.send_chat_action(
+        chat_id=update.effective_chat.id, action="upload_document"
+    )
 
     # Download media
-    file_paths, post_url, description, username, fullname = download_media(clean_url_str)
+    file_paths, post_url, description, username, fullname = download_media(
+        clean_url_str
+    )
 
     if file_paths is None:
         # Send error message if download failed
         # Check if message is from a group chat
         chat_type = update.effective_chat.type
-        if chat_type not in ['group', 'supergroup']:
+        if chat_type not in ["group", "supergroup"]:
             # Only delete in private chats, not in groups
             try:
                 await update.message.delete()
@@ -298,7 +407,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Send message if no media found
         # Check if message is from a group chat
         chat_type = update.effective_chat.type
-        if chat_type not in ['group', 'supergroup']:
+        if chat_type not in ["group", "supergroup"]:
             # Only delete in private chats, not in groups
             try:
                 await update.message.delete()
@@ -308,7 +417,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Check if message is from a group chat before deleting
     chat_type = update.effective_chat.type
-    if chat_type not in ['group', 'supergroup']:
+    if chat_type not in ["group", "supergroup"]:
         # Only delete in private chats, not in groups
         try:
             await update.message.delete()
@@ -316,22 +425,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"Could not delete user's message: {e}")
 
     # Send media
-    await send_media(update, context, file_paths, post_url, description, fullname, username)
+    await send_media(
+        update, context, file_paths, post_url, description, fullname, username
+    )
+
 
 async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Command to add a new accepted user"""
     admin_user_id = update.effective_user.id
-    
+
     # Check if user is admin
     if str(admin_user_id) != ADMIN_USER_ID:
         await update.message.reply_text("You are not authorized to add users.")
         return
-    
+
     # Check if command was used as a reply
     if update.message.reply_to_message:
         # Get user ID from replied message
         target_user_id = update.message.reply_to_message.from_user.id
-        target_username = update.message.reply_to_message.from_user.username or "Unknown"
+        target_username = (
+            update.message.reply_to_message.from_user.username or "Unknown"
+        )
     elif context.args:
         # Get user ID from command arguments
         try:
@@ -340,33 +454,45 @@ async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             int(target_user_id)
             target_username = target_user_id
         except (ValueError, IndexError):
-            await update.message.reply_text("Invalid user ID. Please provide a valid numeric user ID or reply to a user's message.")
+            await update.message.reply_text(
+                "Invalid user ID. Please provide a valid numeric user ID or reply to a user's message."
+            )
             return
     else:
-        await update.message.reply_text("Please reply to a user's message or provide a user ID. Usage: /adduser [user_id]")
+        await update.message.reply_text(
+            "Please reply to a user's message or provide a user ID. Usage: /adduser [user_id]"
+        )
         return
-    
+
     # Add user
     if add_accepted_user(target_user_id):
-        await update.message.reply_text(f"User {target_username} ({target_user_id}) has been added to the accepted users list.")
+        await update.message.reply_text(
+            f"User {target_username} ({target_user_id}) has been added to the accepted users list."
+        )
     else:
-        await update.message.reply_text(f"User {target_username} ({target_user_id}) is already in the accepted users list.")
+        await update.message.reply_text(
+            f"User {target_username} ({target_user_id}) is already in the accepted users list."
+        )
+
 
 async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Command to list accepted users"""
     user_id = update.effective_user.id
-    
+
     # Check if user is admin
     if str(user_id) != ADMIN_USER_ID:
         await update.message.reply_text("You are not authorized to list users.")
         return
-    
+
     # List users
     if ACCEPTED_USERS:
         users_list = "\n".join(ACCEPTED_USERS)
         await update.message.reply_text(f"Accepted users:\n{users_list}")
     else:
-        await update.message.reply_text("No accepted users configured. All users are allowed.")
+        await update.message.reply_text(
+            "No accepted users configured. All users are allowed."
+        )
+
 
 def main():
     """Start the bot"""
@@ -374,14 +500,39 @@ def main():
     application = Application.builder().token(TOKEN).build()
 
     # Register message handler
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+    )
+
     # Register command handlers
     application.add_handler(CommandHandler("adduser", add_user_command))
     application.add_handler(CommandHandler("listusers", list_users_command))
 
-    # Start the Bot
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Run the bot using asyncio.run() to properly handle the event loop
+    asyncio.run(run_bot(application))
 
-if __name__ == '__main__':
+
+async def run_bot(application):
+    """Run the bot with proper event loop management"""
+    # Register command handlers
+    application.add_handler(CommandHandler("adduser", add_user_command))
+    application.add_handler(CommandHandler("listusers", list_users_command))
+    
+    # Start the Bot
+    async with application:
+        await application.start()
+        await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+        
+        # Keep the bot running
+        try:
+            while True:
+                await asyncio.sleep(1)
+        except KeyboardInterrupt:
+            logger.info("Bot stopped by user")
+        finally:
+            await application.updater.stop()
+            await application.stop()
+
+
+if __name__ == "__main__":
     main()
